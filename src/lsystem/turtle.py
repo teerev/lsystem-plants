@@ -1,68 +1,73 @@
+"""2D turtle graphics interpreter for L-system instruction strings.
+
+This module converts an instruction string into a list of line segments.
+
+Conventions
+-----------
+- Coordinates are 2D (x, y)
+- Angles are in degrees
+- 0 degrees points right (+X)
+- 90 degrees points up (+Y)
+- The initial state is at (0, 0) with heading 90 degrees
+
+Supported symbols
+-----------------
+F: move forward and draw
+f: move forward without drawing
++: turn left (counter-clockwise) by `angle`
+-: turn right (clockwise) by `angle`
+[: push state
+]: pop state (raises ValueError if stack is empty)
+|: turn 180 degrees
+
+Unknown symbols are ignored.
+"""
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Tuple, List
+
+
+class Segment(NamedTuple):
+    start: Tuple[float, float]
+    end: Tuple[float, float]
 
 
 @dataclass
 class TurtleState:
-    """2D turtle state.
-
-    Angles are in degrees.
-
-    Attributes
-    ----------
-    x, y:
-        Current position.
-    angle:
-        Current heading angle in degrees where 0 is +X and 90 is +Y.
-    """
-
     x: float
     y: float
     angle: float
 
 
-class Segment(NamedTuple):
-    """A 2D line segment."""
-
-    start: tuple[float, float]
-    end: tuple[float, float]
+def _round6(v: float) -> float:
+    # Stabilize results for deterministic tests and downstream processing.
+    return round(v, 6)
 
 
-def _round_point(x: float, y: float, ndigits: int = 6) -> tuple[float, float]:
-    return (round(x, ndigits), round(y, ndigits))
-
-
-def interpret(instructions: str, angle: float, step: float) -> list[Segment]:
-    """Interpret L-system turtle instructions into 2D line segments.
-
-    Supported symbols
-    -----------------
-    F: move forward and draw
-    f: move forward without drawing
-    +: turn left by `angle` degrees
-    -: turn right by `angle` degrees
-    [: push current state onto stack
-    ]: pop state from stack (raises ValueError if stack is empty)
-    |: turn 180 degrees
-
-    Unknown symbols are ignored.
+def interpret(instructions: str, angle: float, step: float) -> List[Segment]:
+    """Interpret a turtle instruction string into 2D line segments.
 
     Parameters
     ----------
     instructions:
-        Instruction string.
+        L-system output string to interpret.
     angle:
-        Turn angle in degrees.
+        Turn angle in degrees for '+' and '-'.
     step:
-        Forward step length.
+        Forward step size for 'F' and 'f'.
 
     Returns
     -------
     list[Segment]
-        The list of drawn segments.
+        Line segments drawn by 'F' commands.
+
+    Raises
+    ------
+    ValueError
+        If a ']' is encountered with an empty stack.
     """
 
     if not isinstance(instructions, str):
@@ -77,36 +82,34 @@ def interpret(instructions: str, angle: float, step: float) -> list[Segment]:
     segments: list[Segment] = []
 
     for ch in instructions:
-        if ch == "+":
-            state.angle += float(angle)
+        if ch in ("F", "f"):
+            rad = math.radians(state.angle)
+            nx = state.x + float(step) * math.cos(rad)
+            ny = state.y + float(step) * math.sin(rad)
+
+            start = (_round6(state.x), _round6(state.y))
+            end = (_round6(nx), _round6(ny))
+
+            if ch == "F":
+                segments.append(Segment(start=start, end=end))
+
+            state.x, state.y = nx, ny
+
+        elif ch == "+":
+            state.angle = float(state.angle) + float(angle)
         elif ch == "-":
-            state.angle -= float(angle)
+            state.angle = float(state.angle) - float(angle)
         elif ch == "|":
-            state.angle += 180.0
+            state.angle = float(state.angle) + 180.0
         elif ch == "[":
-            # copy current state
+            # Copy the state so future mutation doesn't affect the stored snapshot.
             stack.append(TurtleState(state.x, state.y, state.angle))
         elif ch == "]":
             if not stack:
                 raise ValueError("unbalanced ']' (pop from empty stack)")
             state = stack.pop()
-        elif ch == "F" or ch == "f":
-            rad = math.radians(state.angle)
-            nx = state.x + float(step) * math.cos(rad)
-            ny = state.y + float(step) * math.sin(rad)
-
-            if ch == "F":
-                segments.append(
-                    Segment(
-                        start=_round_point(state.x, state.y),
-                        end=_round_point(nx, ny),
-                    )
-                )
-
-            state.x = nx
-            state.y = ny
         else:
-            # ignore unknown symbols
+            # Ignore unknown symbols (decorative or variables like X).
             continue
 
     return segments
