@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 from lsystem.turtle import Segment
 
@@ -21,12 +22,12 @@ class BoundingBox:
         return self.max_y - self.min_y
 
     @property
-    def center(self) -> tuple[float, float]:
+    def center(self) -> Tuple[float, float]:
         return ((self.min_x + self.max_x) / 2.0, (self.min_y + self.max_y) / 2.0)
 
 
-def compute_bounds(segments: list[Segment]) -> BoundingBox | None:
-    """Compute axis-aligned bounds of segment endpoints.
+def compute_bounds(segments: List[Segment]) -> Optional[BoundingBox]:
+    """Compute axis-aligned bounds for a list of line segments.
 
     Returns None for an empty segment list.
     """
@@ -34,83 +35,101 @@ def compute_bounds(segments: list[Segment]) -> BoundingBox | None:
     if not segments:
         return None
 
-    xs: list[float] = []
-    ys: list[float] = []
+    # Seed with first endpoint for determinism and simplicity.
+    x0, y0 = segments[0].start
+    min_x = max_x = float(x0)
+    min_y = max_y = float(y0)
 
     for seg in segments:
-        (x1, y1) = seg.start
-        (x2, y2) = seg.end
-        xs.extend([float(x1), float(x2)])
-        ys.extend([float(y1), float(y2)])
+        for (x, y) in (seg.start, seg.end):
+            fx = float(x)
+            fy = float(y)
+            if fx < min_x:
+                min_x = fx
+            if fx > max_x:
+                max_x = fx
+            if fy < min_y:
+                min_y = fy
+            if fy > max_y:
+                max_y = fy
 
-    return BoundingBox(min(xs), min(ys), max(xs), max(ys))
+    return BoundingBox(min_x=min_x, min_y=min_y, max_x=max_x, max_y=max_y)
 
 
 def transform_segments(
-    segments: list[Segment],
+    segments: List[Segment],
     width: float,
     height: float,
     padding: float = 0.0,
-) -> list[Segment]:
-    """Scale and translate segments to fit a target canvas.
+) -> List[Segment]:
+    """Scale + translate segments to fit inside a target canvas.
 
-    Uses uniform scaling (preserve aspect ratio) and centers the drawing.
+    - Uniform scaling (aspect ratio preserved)
+    - Centering (bounds center maps to canvas center)
+    - Padding is absolute units and reduces available drawable area on all sides.
 
-    Parameters
-    ----------
-    segments:
-        Input segments.
-    width, height:
-        Target canvas size.
-    padding:
-        Absolute padding (same unit as width/height), applied on all sides.
-
-    Returns
-    -------
-    list[Segment]
-        Transformed segments.
-
-    Raises
-    ------
-    ValueError
-        If width/height are non-positive, padding is negative, padding is too
-        large, or segments are empty.
+    Empty input returns an empty list.
     """
 
-    if width <= 0 or height <= 0:
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        raise ValueError("width and height must be numbers")
+    if not isinstance(padding, (int, float)):
+        raise ValueError("padding must be a number")
+
+    w = float(width)
+    h = float(height)
+    pad = float(padding)
+
+    if w <= 0 or h <= 0:
         raise ValueError("width and height must be positive")
-    if padding < 0:
+    if pad < 0:
         raise ValueError("padding must be non-negative")
+
+    if not segments:
+        return []
 
     bounds = compute_bounds(segments)
     if bounds is None:
-        raise ValueError("segments must not be empty")
+        return []
 
-    avail_w = width - 2.0 * padding
-    avail_h = height - 2.0 * padding
+    avail_w = w - 2.0 * pad
+    avail_h = h - 2.0 * pad
     if avail_w <= 0 or avail_h <= 0:
-        raise ValueError("padding too large for given width/height")
+        raise ValueError("padding too large for the target canvas")
 
-    # Degenerate bounds (point/line) should not cause division by zero.
     bw = bounds.width
     bh = bounds.height
 
+    # Handle degenerate cases (single point / zero-area bounds):
+    # put everything at canvas center (deterministic) and do not scale.
     if bw == 0.0 and bh == 0.0:
-        scale = 1.0
+        cx, cy = bounds.center
+        tx = (w / 2.0) - cx
+        ty = (h / 2.0) - cy
+
+        def _t(p: Tuple[float, float]) -> Tuple[float, float]:
+            return (p[0] + tx, p[1] + ty)
+
+        return [Segment(start=_t(s.start), end=_t(s.end)) for s in segments]
+
+    # Uniform scaling; if one dimension is zero, scale from the other.
+    if bw == 0.0:
+        scale = avail_h / bh
+    elif bh == 0.0:
+        scale = avail_w / bw
     else:
-        scale_x = float("inf") if bw == 0.0 else (avail_w / bw)
-        scale_y = float("inf") if bh == 0.0 else (avail_h / bh)
-        scale = min(scale_x, scale_y)
+        scale = min(avail_w / bw, avail_h / bh)
 
-    (cx, cy) = bounds.center
-    target_cx = width / 2.0
-    target_cy = height / 2.0
+    bx, by = bounds.center
+    target_cx = w / 2.0
+    target_cy = h / 2.0
 
-    def tx(p: tuple[float, float]) -> tuple[float, float]:
-        x, y = p
-        return (
-            (float(x) - cx) * scale + target_cx,
-            (float(y) - cy) * scale + target_cy,
-        )
+    def _transform_point(p: Tuple[float, float]) -> Tuple[float, float]:
+        x, y = float(p[0]), float(p[1])
+        # Translate to origin at bounds center, scale, then translate to canvas center.
+        return ((x - bx) * scale + target_cx, (y - by) * scale + target_cy)
 
-    return [Segment(start=tx(s.start), end=tx(s.end)) for s in segments]
+    return [
+        Segment(start=_transform_point(seg.start), end=_transform_point(seg.end))
+        for seg in segments
+    ]
