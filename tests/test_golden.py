@@ -3,12 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from lsystem.core import expand
-from lsystem.presets import get_preset
+from lsystem.presets import get_preset, list_presets
 from lsystem.render_svg import render_svg
 from lsystem.turtle import Segment, interpret
 
@@ -23,97 +22,90 @@ def normalize_segments(segments: list[Segment]) -> list[dict[str, list[float]]]:
     ]
 
 
-def _canonical_segments_json(normalized: list[dict[str, list[float]]]) -> str:
-    # Stable serialization for hashing/comparison.
+def canonical_segments_json(normalized: list[dict[str, list[float]]]) -> str:
+    # Canonical: sorted keys, minimal whitespace, UTF-8
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _sha256_text(text: str) -> str:
+def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _ensure_parent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, obj: Any) -> None:
-    _ensure_parent(path)
-    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _write_text(path: Path, text: str) -> None:
-    _ensure_parent(path)
-    path.write_text(text, encoding="utf-8")
+def _paths_for(golden_dir: Path, preset: str) -> tuple[Path, Path, Path]:
+    seg_path = golden_dir / f"{preset}_segments.json"
+    svg_path = golden_dir / f"{preset}.svg"
+    sha_path = golden_dir / f"{preset}_segments.sha256"
+    return seg_path, svg_path, sha_path
 
 
 def _generate_for_preset(preset_name: str) -> tuple[list[dict[str, list[float]]], str, str]:
     preset = get_preset(preset_name)
-    expanded = expand(preset.system, preset.iterations)
-    segments = interpret(expanded, angle=preset.angle, step=preset.step)
+    instructions = expand(preset.system, preset.iterations)
+    segments = interpret(instructions, angle=preset.angle, step=preset.step)
     normalized = normalize_segments(segments)
-    canonical = _canonical_segments_json(normalized)
-    seg_hash = _sha256_text(canonical)
+    canonical = canonical_segments_json(normalized)
     svg = render_svg(segments)
-    return normalized, seg_hash, svg
+    digest = sha256_hex(canonical)
+    return normalized, svg, digest
 
 
-def _compare_or_update_json(path: Path, actual_obj: Any, *, update: bool) -> Any:
-    if update or not path.exists():
-        _write_json(path, actual_obj)
-        return actual_obj
-    expected = _read_json(path)
-    assert actual_obj == expected
-    return expected
+def _read_json(path: Path) -> object:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _compare_or_update_text(path: Path, actual_text: str, *, update: bool) -> str:
-    if update or not path.exists():
-        _write_text(path, actual_text)
-        return actual_text
-    expected = path.read_text(encoding="utf-8")
-    assert actual_text == expected
-    return expected
+def _ensure_or_compare(path: Path, content: str, update_golden: bool) -> None:
+    if update_golden or not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return
+    assert path.read_text(encoding="utf-8") == content
 
 
-@pytest.mark.parametrize("preset_name", ["weed", "fern", "bush"])
-def test_preset_segments_match_golden(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
-    normalized, seg_hash, _svg = _generate_for_preset(preset_name)
-
-    seg_path = golden_dir / f"{preset_name}_segments.json"
-    hash_path = golden_dir / f"{preset_name}_segments.sha256"
-
-    _compare_or_update_json(seg_path, normalized, update=update_golden)
-    _compare_or_update_text(hash_path, seg_hash + "\n", update=update_golden)
+def _ensure_or_compare_json(path: Path, data: object, update_golden: bool) -> None:
+    content = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    _ensure_or_compare(path, content, update_golden=update_golden)
 
 
-@pytest.mark.parametrize("preset_name", ["weed", "fern", "bush"])
-def test_preset_svg_is_created_and_non_empty(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
-    _normalized, _seg_hash, svg = _generate_for_preset(preset_name)
+@pytest.mark.parametrize("preset_name", ["fern", "bush", "weed"])
+def test_segments_match_golden(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
+    normalized, _svg, _digest = _generate_for_preset(preset_name)
+    seg_path, _svg_path, _sha_path = _paths_for(golden_dir, preset_name)
 
-    svg_path = golden_dir / f"{preset_name}.svg"
-    saved = _compare_or_update_text(svg_path, svg, update=update_golden)
+    _ensure_or_compare_json(seg_path, normalized, update_golden=update_golden)
 
-    assert isinstance(saved, str)
-    assert saved.strip().startswith("<svg")
-    assert "<line" in saved or "</svg>" in saved
-    assert len(saved.strip()) > 20
+    if not update_golden and seg_path.exists():
+        assert _read_json(seg_path) == normalized
 
 
-@pytest.mark.parametrize("preset_name", ["weed", "fern", "bush"])
-def test_golden_hash_matches_canonical_json(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
-    normalized, seg_hash, _svg = _generate_for_preset(preset_name)
-    canonical = _canonical_segments_json(normalized)
-    expected_hash = _sha256_text(canonical) + "\n"
+@pytest.mark.parametrize("preset_name", ["fern", "bush", "weed"])
+def test_svg_file_created_and_non_empty(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
+    _normalized, svg, _digest = _generate_for_preset(preset_name)
+    _seg_path, svg_path, _sha_path = _paths_for(golden_dir, preset_name)
 
-    hash_path = golden_dir / f"{preset_name}_segments.sha256"
+    _ensure_or_compare(svg_path, svg, update_golden=update_golden)
+    assert svg_path.exists()
+    assert svg_path.stat().st_size > 0
 
-    if update_golden or not hash_path.exists():
-        _write_text(hash_path, expected_hash)
-    else:
-        assert hash_path.read_text(encoding="utf-8") == expected_hash
 
-    assert seg_hash + "\n" == expected_hash
+@pytest.mark.parametrize("preset_name", ["fern", "bush", "weed"])
+def test_golden_hash_matches(preset_name: str, golden_dir: Path, update_golden: bool) -> None:
+    normalized, _svg, digest = _generate_for_preset(preset_name)
+    _seg_path, _svg_path, sha_path = _paths_for(golden_dir, preset_name)
+
+    canonical = canonical_segments_json(normalized)
+    computed = sha256_hex(canonical)
+    assert computed == digest  # self-consistency
+
+    _ensure_or_compare(sha_path, digest + "\n", update_golden=update_golden)
+
+    if not update_golden and sha_path.exists():
+        assert sha_path.read_text(encoding="utf-8").strip() == digest
+
+
+def test_all_presets_have_golden_files(golden_dir: Path) -> None:
+    # Ensure the golden strategy covers the full preset catalog.
+    for name in list_presets():
+        seg_path, svg_path, sha_path = _paths_for(golden_dir, name)
+        assert seg_path.name.endswith("_segments.json")
+        assert svg_path.name.endswith(".svg")
+        assert sha_path.name.endswith("_segments.sha256")

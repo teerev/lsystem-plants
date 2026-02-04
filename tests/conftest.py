@@ -10,20 +10,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--update-golden",
         action="store_true",
         default=False,
-        help="Update golden fixture files instead of failing when they differ.",
+        help="Regenerate golden fixture files under tests/fixtures/golden/",
     )
 
 
-@pytest.fixture
-def update_golden(request: pytest.FixtureRequest) -> bool:
-    return bool(request.config.getoption("--update-golden"))
+@pytest.fixture(scope="session")
+def update_golden(pytestconfig: pytest.Config) -> bool:
+    return bool(pytestconfig.getoption("--update-golden"))
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def golden_dir(fixtures_dir: Path) -> Path:
     return fixtures_dir / "golden"
