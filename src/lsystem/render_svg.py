@@ -1,30 +1,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 from lsystem.bounds import transform_segments
 from lsystem.turtle import Segment
 
 
-def _fmt4(value: float) -> str:
-    # Canonical float formatting: exactly 4 decimal places.
-    return f"{float(value):.4f}"
+def _fmt4(v: float) -> str:
+    """Format a number to exactly 4 decimal places for canonical SVG output."""
+
+    return f"{float(v):.4f}"
 
 
-def _svg_line(seg: Segment, stroke: str, stroke_width: float) -> str:
-    (x1, y1) = seg.start
-    (x2, y2) = seg.end
-
-    # Canonical attribute ordering: alphabetical.
-    attrs = (
-        f'x1="{_fmt4(x1)}" '
-        f'x2="{_fmt4(x2)}" '
-        f'y1="{_fmt4(y1)}" '
-        f'y2="{_fmt4(y2)}" '
-        f'stroke="{stroke}" '
-        f'stroke-width="{_fmt4(stroke_width)}"'
-    )
-    return f"  <line {attrs} />"
+def _sanitize_stroke(stroke: str) -> str:
+    if not isinstance(stroke, str) or not stroke:
+        raise ValueError("stroke must be a non-empty string")
+    # Keep minimal constraints: deterministic output and basic SVG safety.
+    # Disallow characters that could break attribute quoting.
+    if any(ch in stroke for ch in ['"', "'", "<", ">", "\n", "\r", "\t"]):
+        raise ValueError("stroke contains invalid characters")
+    return stroke
 
 
 def render_svg(
@@ -35,45 +31,66 @@ def render_svg(
     stroke_width: float = 1.0,
     padding: float = 20.0,
 ) -> str:
-    """Render a list of line segments to a canonical SVG string.
+    """Render line segments as a canonical SVG string.
 
-    Canonical output guarantees deterministic serialization:
-    - fixed 4dp float formatting
-    - stable attribute ordering (alphabetical)
-    - consistent whitespace/newlines
-
-    Segments are auto-scaled to fit the canvas using bounds.transform_segments.
-
-    For empty segments, returns a valid SVG container with no lines.
+    Canonical properties:
+    - Stable element/attribute ordering
+    - Fixed float precision (4 decimals)
+    - Predictable whitespace/newlines
     """
 
+    if not isinstance(width, int) or not isinstance(height, int):
+        raise ValueError("width and height must be ints")
     if width <= 0 or height <= 0:
         raise ValueError("width and height must be positive")
-    if stroke_width <= 0:
+    if not isinstance(stroke_width, (int, float)):
+        raise ValueError("stroke_width must be a number")
+    if float(stroke_width) <= 0:
         raise ValueError("stroke_width must be positive")
-    if padding < 0:
+    if not isinstance(padding, (int, float)):
+        raise ValueError("padding must be a number")
+    if float(padding) < 0:
         raise ValueError("padding must be non-negative")
 
-    # Canonical container attributes: alphabetical order.
-    svg_open = (
-        f'<svg height="{int(height)}" '
-        f'viewBox="0 0 {int(width)} {int(height)}" '
-        f'width="{int(width)}" '
-        f'xmlns="http://www.w3.org/2000/svg">'
+    stroke = _sanitize_stroke(stroke)
+
+    # Normalize/transform for output size.
+    transformed = transform_segments(segments, float(width), float(height), float(padding))
+
+    # SVG header and container.
+    # Attribute order is alphabetical for determinism.
+    lines: list[str] = []
+    lines.append(
+        (
+            f'<svg height="{height}" '
+            f'viewBox="0 0 {width} {height}" '
+            f'width="{width}" '
+            f'xmlns="http://www.w3.org/2000/svg">'
+        )
     )
 
-    if not segments:
-        return f"{svg_open}\n</svg>\n"
+    # Render each segment as a <line> with canonical attribute ordering.
+    # Attributes alphabetical: x1 x2 y1 y2 then stroke stroke-width.
+    for seg in transformed:
+        x1, y1 = seg.start
+        x2, y2 = seg.end
+        lines.append(
+            (
+                f'<line x1="{_fmt4(x1)}" x2="{_fmt4(x2)}" '
+                f'y1="{_fmt4(y1)}" y2="{_fmt4(y2)}" '
+                f'stroke="{stroke}" stroke-width="{_fmt4(stroke_width)}" />'
+            )
+        )
 
-    segs = transform_segments(segments, float(width), float(height), float(padding))
-
-    lines = [svg_open]
-    lines.extend(_svg_line(seg, stroke=stroke, stroke_width=stroke_width) for seg in segs)
     lines.append("</svg>")
     return "\n".join(lines) + "\n"
 
 
 def save_svg(content: str, path: Path) -> None:
-    """Write SVG content to a file."""
+    if not isinstance(content, str):
+        raise ValueError("content must be a str")
+    if not isinstance(path, Path):
+        raise ValueError("path must be a pathlib.Path")
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
