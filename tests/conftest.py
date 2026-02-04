@@ -1,16 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 
-@pytest.fixture
-def tmp_output_dir(tmp_path) -> Iterator[object]:
-    """Temporary output directory for tests that write files.
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help="Update golden fixture files instead of failing when they differ.",
+    )
 
-    Using a named fixture makes future I/O tests (e.g., SVG exports) consistent.
-    """
-    out_dir = tmp_path / "output"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    yield out_dir
+
+@pytest.fixture
+def update_golden(request: pytest.FixtureRequest) -> bool:
+    return bool(request.config.getoption("--update-golden"))
+
+
+@pytest.fixture
+def fixtures_dir() -> Path:
+    return Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def golden_dir(fixtures_dir: Path) -> Path:
+    return fixtures_dir / "golden"
