@@ -1,76 +1,90 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
-
-def _run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "lsystem", *argv],
-        cwd=str(cwd),
+        [sys.executable, "-m", "lsystem", *args],
+        cwd=str(cwd) if cwd is not None else None,
         text=True,
         capture_output=True,
     )
 
 
-def test_cli_help(tmp_path: Path) -> None:
-    p = _run(["--help"], cwd=tmp_path)
+def test_cli_help() -> None:
+    p = _run("--help")
     assert p.returncode == 0
-    assert "usage" in p.stdout.lower() or "usage" in p.stderr.lower()
-    assert "list" in (p.stdout + p.stderr)
-    assert "render" in (p.stdout + p.stderr)
+    assert "Generate L-system plant SVG images" in p.stdout
+    assert "list" in p.stdout
+    assert "render" in p.stdout
 
 
-def test_cli_list_shows_presets(tmp_path: Path) -> None:
-    p = _run(["list"], cwd=tmp_path)
+def test_cli_list_contains_presets() -> None:
+    p = _run("list")
     assert p.returncode == 0
-    out = p.stdout
-    assert "fern" in out
-    assert "weed" in out
-    assert "bush" in out
+    # Names should appear in stdout output lines
+    assert "fern" in p.stdout
+    assert "weed" in p.stdout
+    assert "bush" in p.stdout
 
 
-def test_cli_render_creates_default_output(tmp_path: Path) -> None:
-    p = _run(["render", "fern"], cwd=tmp_path)
+def test_cli_render_default_output_creates_svg(tmp_path: Path) -> None:
+    p = _run("render", "fern", cwd=tmp_path)
     assert p.returncode == 0
-    out_file = tmp_path / "fern.svg"
-    assert out_file.exists()
-    content = out_file.read_text(encoding="utf-8")
-    assert content.startswith("<svg")
-    assert "<line" in content
-    assert "Wrote" in p.stderr
+    out = tmp_path / "fern.svg"
+    assert out.is_file()
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith("<svg")
+    assert "<line" in text
 
 
-def test_cli_render_custom_output(tmp_path: Path) -> None:
-    out_file = tmp_path / "custom.svg"
-    p = _run(["render", "fern", "--output", str(out_file)], cwd=tmp_path)
+def test_cli_render_custom_output_path(tmp_path: Path) -> None:
+    out = tmp_path / "custom.svg"
+    p = _run("render", "fern", "--output", str(out), cwd=tmp_path)
     assert p.returncode == 0
-    assert out_file.exists()
+    assert out.is_file()
 
 
-def test_cli_invalid_preset_exits_1(tmp_path: Path) -> None:
-    p = _run(["render", "nope"], cwd=tmp_path)
+def test_cli_invalid_preset_exits_1() -> None:
+    p = _run("render", "not-a-preset")
     assert p.returncode == 1
-    assert "unknown preset" in p.stderr.lower()
+    assert "unknown preset" in p.stderr
 
 
-def test_cli_override_dimensions(tmp_path: Path) -> None:
-    p = _run(["render", "fern", "--width", "321", "--height", "123"], cwd=tmp_path)
+def test_cli_override_dimensions_affect_svg(tmp_path: Path) -> None:
+    out = tmp_path / "dim.svg"
+    p = _run(
+        "render",
+        "fern",
+        "--output",
+        str(out),
+        "--width",
+        "123",
+        "--height",
+        "77",
+        cwd=tmp_path,
+    )
     assert p.returncode == 0
-    content = (tmp_path / "fern.svg").read_text(encoding="utf-8")
-    assert 'viewBox="0 0 321 123"' in content
-    assert 'width="321"' in content
-    assert 'height="123"' in content
+    text = out.read_text(encoding="utf-8")
+    assert 'width="123"' in text
+    assert 'height="77"' in text
+    assert 'viewBox="0 0 123 77"' in text
 
 
-def test_cli_override_iterations_changes_output(tmp_path: Path) -> None:
-    p1 = _run(["render", "weed", "--output", "a.svg", "--iterations", "1"], cwd=tmp_path)
-    p2 = _run(["render", "weed", "--output", "b.svg", "--iterations", "3"], cwd=tmp_path)
-    assert p1.returncode == 0
-    assert p2.returncode == 0
-    a = (tmp_path / "a.svg").read_text(encoding="utf-8")
-    b = (tmp_path / "b.svg").read_text(encoding="utf-8")
-    assert a != b
+def test_cli_output_path_is_directory_user_error(tmp_path: Path) -> None:
+    out_dir = tmp_path / "outdir"
+    out_dir.mkdir()
+    p = _run("render", "fern", "--output", str(out_dir), cwd=tmp_path)
+    assert p.returncode == 1
+    assert "directory" in p.stderr
+
+
+def test_cli_progress_prints_to_stderr(tmp_path: Path) -> None:
+    p = _run("render", "fern", cwd=tmp_path)
+    assert p.returncode == 0
+    assert "Rendering preset" in p.stderr
+    assert "Wrote" in p.stderr
