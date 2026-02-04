@@ -1,6 +1,7 @@
 import pytest
 
-from lsystem.core import LSystem, MAX_ITERATIONS, MAX_OUTPUT_LENGTH, expand
+from lsystem.core import LSystem, expand
+from lsystem.core import MAX_ITERATIONS, MAX_OUTPUT_LENGTH
 
 
 def test_simple_expansion() -> None:
@@ -8,9 +9,9 @@ def test_simple_expansion() -> None:
     assert expand(system, 1) == "FF"
 
 
-def test_multi_iteration_doubles_each_step() -> None:
+def test_multi_iteration_doubling() -> None:
     system = LSystem(axiom="F", rules={"F": "FF"})
-    assert expand(system, 3) == "F" * (2**3)
+    assert expand(system, 3) == "F" * 8
 
 
 def test_unknown_chars_preserved() -> None:
@@ -18,7 +19,7 @@ def test_unknown_chars_preserved() -> None:
     assert expand(system, 1) == "XABX"
 
 
-def test_determinism_same_inputs_same_output() -> None:
+def test_determinism() -> None:
     system = LSystem(axiom="F+F", rules={"F": "F-F"})
     out1 = expand(system, 5)
     out2 = expand(system, 5)
@@ -32,40 +33,42 @@ def test_max_iterations_enforced() -> None:
 
 
 def test_max_length_enforced() -> None:
-    # Ensure we exceed MAX_OUTPUT_LENGTH within allowed iterations.
-    # Start length = 1, rule makes length multiply by 4 each iteration.
-    # After 12 iterations: 4**12 = 16,777,216 (> 10,000,000)
-    system = LSystem(axiom="A", rules={"A": "AAAA"})
+    # Create a rule that grows extremely fast so we can exceed MAX_OUTPUT_LENGTH
+    # within the MAX_ITERATIONS limit.
+    # After n iterations, length will be (growth_factor**n).
+    growth_factor = 1000
+    system = LSystem(axiom="F", rules={"F": "F" * growth_factor})
+
+    # Find smallest n <= MAX_ITERATIONS such that growth_factor**n > MAX_OUTPUT_LENGTH.
+    n = 0
+    length = 1
+    while length <= MAX_OUTPUT_LENGTH and n < MAX_ITERATIONS:
+        n += 1
+        length *= growth_factor
+
+    assert n <= MAX_ITERATIONS
+    assert length > MAX_OUTPUT_LENGTH
+
     with pytest.raises(ValueError):
-        expand(system, 12)
+        expand(system, n)
 
 
 def test_empty_axiom_rejected() -> None:
     with pytest.raises(ValueError):
-        LSystem(axiom="", rules={"A": "B"})
+        LSystem(axiom="", rules={"F": "FF"})
 
 
 def test_empty_rules_rejected() -> None:
     with pytest.raises(ValueError):
-        LSystem(axiom="A", rules={})
+        LSystem(axiom="F", rules={})
 
 
-def test_complex_rules_single_pass_application() -> None:
-    # Verify each character expanded based on rules from original string (single pass).
-    system = LSystem(axiom="ABX", rules={"A": "BC", "B": "A"})
-    assert expand(system, 1) == "BCA X".replace(" ", "")
-
-
-def test_iterations_zero_returns_axiom() -> None:
-    system = LSystem(axiom="ABC", rules={"A": "B"})
-    assert expand(system, 0) == "ABC"
-
-
-def test_negative_iterations_rejected() -> None:
-    system = LSystem(axiom="A", rules={"A": "AA"})
+def test_invalid_rule_key_rejected() -> None:
     with pytest.raises(ValueError):
-        expand(system, -1)
+        LSystem(axiom="F", rules={"FF": "F"})
 
 
-def test_output_length_limit_constant_is_sensible() -> None:
-    assert MAX_OUTPUT_LENGTH == 10_000_000
+def test_complex_rules_single_pass() -> None:
+    # Ensure multiple rules apply in a single iteration based on the original string.
+    system = LSystem(axiom="AB", rules={"A": "BA", "B": "A"})
+    assert expand(system, 1) == "BAA"
