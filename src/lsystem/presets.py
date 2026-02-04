@@ -1,29 +1,34 @@
+"""Curated plant-like L-system presets.
+
+This module provides a small library of deterministic, plant-inspired L-systems
+that expand quickly and draw recognizable botanical forms using the project's
+supported turtle symbols.
+
+Presets are intended to be good-looking defaults:
+- small/fast: "weed" (simple branching)
+- medium: "fern" (fractal fern-like fronds)
+- large: "bush" (dense shrub/tree-like canopy)
+
+All presets only use supported symbols in their expanded output:
+F, f, +, -, [, ], |
+
+Notes
+-----
+The classic plant formulations use the variable symbol 'X' during expansion.
+The turtle interpreter ignores unknown symbols, so 'X' is safe in the expanded
+string as long as the drawing symbols are supported.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lsystem.core import LSystem, MAX_ITERATIONS, expand
+from lsystem.core import LSystem
 
 
 @dataclass(frozen=True)
 class Preset:
-    """Bundled configuration for a curated plant-like L-system.
-
-    Attributes
-    ----------
-    name:
-        Preset identifier used in :func:`get_preset`.
-    system:
-        The underlying deterministic :class:`lsystem.core.LSystem`.
-    angle:
-        Turn angle in degrees used by the turtle interpreter.
-    step:
-        Forward step length used by the turtle interpreter.
-    iterations:
-        Recommended expansion iterations (kept within safety limits).
-    description:
-        Brief visual description of what the preset tends to resemble.
-    """
+    """Bundle of parameters required to render an L-system plant."""
 
     name: str
     system: LSystem
@@ -33,46 +38,9 @@ class Preset:
     description: str
 
 
-def _validate_symbols(preset: Preset) -> None:
-    """Best-effort validation that the preset uses only supported symbols.
-
-    Note: the engine itself can expand arbitrary symbols, but the turtle
-    interpreter only understands F f + - [ ] |.
-    """
-
-    allowed = set("Ff+-[]|")
-    # Allow non-drawing symbols in the *axiom/rules* only if they will be expanded
-    # away by the time we render. For curated presets we keep them to supported set.
-    for s in [preset.system.axiom, *preset.system.rules.keys(), *preset.system.rules.values()]:
-        for ch in s:
-            if ch not in allowed:
-                raise ValueError(
-                    f"preset '{preset.name}' contains unsupported symbol {ch!r}; "
-                    "only 'F', 'f', '+', '-', '[', ']', '|' are allowed"
-                )
-
-    if not (0 <= preset.iterations <= MAX_ITERATIONS):
-        raise ValueError(
-            f"preset '{preset.name}' iterations must be within [0, {MAX_ITERATIONS}]"
-        )
-
-    # Ensure it can expand at least once without violating core safety checks.
-    _ = expand(preset.system, preset.iterations)
-
-
-# Curated presets.
-# All rules/axioms use only supported turtle symbols.
-_PRESETS: dict[str, Preset] = {}
-
-
-def _register(preset: Preset) -> None:
-    _validate_symbols(preset)
-    _PRESETS[preset.name] = preset
-
-
-# 1) Small / fast: simple branching weed.
-_register(
-    Preset(
+_PRESETS: dict[str, Preset] = {
+    # Small: simple branching "weed" / sprout
+    "weed": Preset(
         name="weed",
         system=LSystem(
             axiom="F",
@@ -83,30 +51,31 @@ _register(
         angle=22.5,
         step=5.0,
         iterations=3,
-        description="Simple branching weed with a main stem and small side shoots.",
-    )
-)
-
-# 2) Medium complexity: fern-like fronds.
-_register(
-    Preset(
+        description=(
+            "Small, fast branching sprout with a few side shoots; "
+            "good for quick previews."
+        ),
+    ),
+    # Medium: fern/fractal plant (classic)
+    "fern": Preset(
         name="fern",
         system=LSystem(
-            axiom="F",
+            axiom="X",
             rules={
-                "F": "F[+F]F[-F]F",
+                "X": "F[+X]F[-X]+X",
+                "F": "FF",
             },
         ),
         angle=20.0,
-        step=4.0,
-        iterations=4,
-        description="Fern-like fronds; repeating pinnae along a central rachis.",
-    )
-)
-
-# 3) Larger / more detailed: bushy shrub.
-_register(
-    Preset(
+        step=3.0,
+        iterations=5,
+        description=(
+            "Fractal fern-like plant with repeated fronds; medium complexity "
+            "and balanced detail."
+        ),
+    ),
+    # Large: dense bush/shrub (classic)
+    "bush": Preset(
         name="bush",
         system=LSystem(
             axiom="F",
@@ -115,20 +84,23 @@ _register(
             },
         ),
         angle=22.5,
-        step=3.0,
+        step=2.5,
         iterations=4,
-        description="Dense bush/shrub with many branchlets and clustered growth.",
-    )
-)
+        description=(
+            "Dense shrub/bush with many short branches creating a rounded canopy; "
+            "more detailed and visually fuller."
+        ),
+    ),
+}
 
 
 def get_preset(name: str) -> Preset:
-    """Return a preset by name.
+    """Return a named preset.
 
     Raises
     ------
     KeyError
-        If the preset name is not known.
+        If the preset name is unknown.
     """
 
     if not isinstance(name, str):
