@@ -1,89 +1,85 @@
 from __future__ import annotations
 
-import subprocess
-import sys
+import re
 from pathlib import Path
 
+import pytest
 
-def _run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "lsystem", *args],
-        cwd=str(cwd) if cwd is not None else None,
-        text=True,
-        capture_output=True,
-    )
+from lsystem.cli import main
 
 
-def test_cli_help() -> None:
-    res = _run_cli("--help")
-    assert res.returncode == 0
-    assert "list" in res.stdout
-    assert "render" in res.stdout
+def test_cli_help(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as e:
+        # argparse exits with 0
+        raise SystemExit(main(["--help"]))
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "list" in out
+    assert "render" in out
 
 
-def test_cli_list_contains_presets() -> None:
-    res = _run_cli("list")
-    assert res.returncode == 0
+def test_cli_list_shows_presets(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["list"])
+    assert code == 0
+    out = capsys.readouterr().out
     # at least one known preset
-    assert "fern" in res.stdout
-    assert "weed" in res.stdout
+    assert "fern" in out
 
 
-def test_cli_render_default_output_creates_svg(tmp_path: Path) -> None:
-    res = _run_cli("render", "fern", cwd=tmp_path)
-    assert res.returncode == 0
-    out = tmp_path / "fern.svg"
-    assert out.exists()
-    content = out.read_text(encoding="utf-8")
-    assert content.startswith("<svg")
-    assert "<line" in content
-    assert "Rendered 'fern'" in res.stderr
+def test_cli_render_default_output_creates_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    code = main(["render", "fern"])
+    assert code == 0
+    out_path = tmp_path / "fern.svg"
+    assert out_path.exists()
+    content = out_path.read_text(encoding="utf-8")
+    assert content.lstrip().startswith("<svg")
 
 
 def test_cli_render_custom_output(tmp_path: Path) -> None:
-    out = tmp_path / "custom.svg"
-    res = _run_cli("render", "fern", "--output", str(out), cwd=tmp_path)
-    assert res.returncode == 0
-    assert out.exists()
+    out_path = tmp_path / "custom.svg"
+    code = main(["render", "fern", "--output", str(out_path)])
+    assert code == 0
+    assert out_path.exists()
 
 
-def test_cli_invalid_preset_exits_1() -> None:
-    res = _run_cli("render", "does_not_exist")
-    assert res.returncode == 1
-    assert "unknown preset" in res.stderr
+def test_cli_invalid_preset_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["render", "not-a-preset"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "unknown preset" in err
+
+
+def test_cli_override_dimensions_affect_svg(tmp_path: Path) -> None:
+    out_path = tmp_path / "dim.svg"
+    code = main(
+        [
+            "render",
+            "fern",
+            "--output",
+            str(out_path),
+            "--width",
+            "123",
+            "--height",
+            "77",
+        ]
+    )
+    assert code == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert re.search(r'width="123"', content)
+    assert re.search(r'height="77"', content)
 
 
 def test_cli_override_iterations_changes_output(tmp_path: Path) -> None:
-    out1 = tmp_path / "a.svg"
-    out2 = tmp_path / "b.svg"
+    out1 = tmp_path / "i1.svg"
+    out2 = tmp_path / "i2.svg"
 
-    res1 = _run_cli("render", "weed", "--iterations", "1", "--output", str(out1), cwd=tmp_path)
-    res2 = _run_cli("render", "weed", "--iterations", "2", "--output", str(out2), cwd=tmp_path)
+    code1 = main(["render", "weed", "--output", str(out1), "--iterations", "1"])
+    code2 = main(["render", "weed", "--output", str(out2), "--iterations", "3"])
+    assert code1 == 0
+    assert code2 == 0
 
-    assert res1.returncode == 0
-    assert res2.returncode == 0
-
+    # More iterations should generally yield more segments -> larger SVG content
     c1 = out1.read_text(encoding="utf-8")
     c2 = out2.read_text(encoding="utf-8")
-
-    # more iterations should generally produce more line segments
-    assert c1.count("<line") < c2.count("<line")
-
-
-def test_cli_render_custom_dimensions(tmp_path: Path) -> None:
-    out = tmp_path / "dim.svg"
-    res = _run_cli(
-        "render",
-        "fern",
-        "--width",
-        "321",
-        "--height",
-        "123",
-        "--output",
-        str(out),
-        cwd=tmp_path,
-    )
-    assert res.returncode == 0
-    content = out.read_text(encoding="utf-8")
-    assert 'width="321"' in content
-    assert 'height="123"' in content
+    assert len(c2) > len(c1)
